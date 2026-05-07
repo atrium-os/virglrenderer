@@ -57,6 +57,13 @@ vkr_mtl_shm_alloc(void *mtl_device, uint64_t size)
    }
 
    id<MTLDevice> device = (id<MTLDevice>)mtl_device;
+   /* Wrap the shm-backed pages directly. Metal will use them as
+    * GPU-accessible storage on Apple Silicon UMA, and the same
+    * pages are mmap'd by the QEMU process for cross-process sharing
+    * (and ultimately by the guest via the host_visible PCI BAR).
+    * Requires the atrium-os/MoltenVK makeResident fix on the import
+    * path; without it the GPU IOMMU has no mapping for these
+    * imported pages and writes silently go nowhere. */
    id<MTLBuffer> buffer = [device newBufferWithBytesNoCopy:shm_ptr
                                                     length:aligned_size
                                                    options:MTLResourceStorageModeShared

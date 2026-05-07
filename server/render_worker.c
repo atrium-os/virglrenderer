@@ -33,7 +33,38 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #ifdef ENABLE_RENDER_SERVER_WORKER_THREAD
-#include <threads.h>
+/* macOS lacks C11 <threads.h>. Map the tiny subset we use to pthread. */
+#include <pthread.h>
+typedef pthread_t thrd_t;
+#define thrd_success 0
+#define thrd_current() pthread_self()
+#define thrd_equal(a, b) pthread_equal((a), (b))
+struct atrium_thrd_trampoline {
+   int (*func)(void *);
+   void *arg;
+};
+static inline void *atrium_thrd_trampoline_run(void *p) {
+   struct atrium_thrd_trampoline *t = p;
+   int (*func)(void *) = t->func;
+   void *arg = t->arg;
+   free(t);
+   func(arg);
+   return NULL;
+}
+static inline int thrd_create(thrd_t *thr, int (*func)(void *), void *arg) {
+   struct atrium_thrd_trampoline *t = malloc(sizeof(*t));
+   if (!t) return -1;
+   t->func = func; t->arg = arg;
+   if (pthread_create(thr, NULL, atrium_thrd_trampoline_run, t) != 0) {
+      free(t); return -1;
+   }
+   return thrd_success;
+}
+static inline void thrd_join(thrd_t thr, int *res) {
+   void *retval = NULL;
+   pthread_join(thr, &retval);
+   if (res) *res = 0;
+}
 #endif
 #include <unistd.h>
 

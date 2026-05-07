@@ -1320,8 +1320,26 @@ int virgl_renderer_resource_map_fixed(uint32_t res_handle, void *addr)
    switch (export_fd_type) {
       case VIRGL_RESOURCE_FD_DMABUF:
       case VIRGL_RESOURCE_FD_SHM:
+#ifdef __APPLE__
+         /* On macOS HVF, hv_vm_map() pins host pages at QEMU startup;
+          * a subsequent userspace MAP_FIXED only changes QEMU's VA
+          * mapping but doesn't refresh HVF's stage-2 page tables, so
+          * the guest's BAR view still sees the original anon pages
+          * rather than our newly-mapped SHM-backed pages.
+          *
+          * Force the EOPNOTSUPP fallback so QEMU goes through
+          * `memory_region_add_subregion_overlap` instead — that
+          * triggers MemoryListener which calls hv_vm_unmap +
+          * hv_vm_map, refreshing stage-2 to point at the new pages.
+          *
+          * See feedback_venus_shmem_must_be_host3d note in atrium-bsd
+          * for the full diagnosis. */
+         (void)addr;
+         map = NULL;  /* triggers -EOPNOTSUPP path below */
+#else
          map = mmap(addr, res->map_size, PROT_WRITE | PROT_READ,
                     MAP_FIXED | MAP_SHARED, fd, 0);
+#endif
          break;
       case VIRGL_RESOURCE_OPAQUE_HANDLE:
          map = ctx->resource_map(ctx, res, addr, PROT_WRITE | PROT_READ,
