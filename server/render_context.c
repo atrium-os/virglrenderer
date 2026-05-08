@@ -11,16 +11,20 @@
 #include "virgl_util.h"
 
 #include "render_state.h"
+#include "atrium_trace.h"
 
 void
 render_context_update_timeline(struct render_context *ctx,
                                uint32_t ring_idx,
                                uint32_t seqno)
 {
+   ATRIUM_TRACE_INSTANT_ID("worker.update_timeline", seqno);
    /* this can be called by the context's main thread and sync threads */
    atomic_store(&ctx->shmem_timelines[ring_idx], seqno);
-   if (ctx->fence_eventfd >= 0)
+   if (ctx->fence_eventfd >= 0) {
+      ATRIUM_TRACE_INSTANT_ID("worker.fence_eventfd_write", seqno);
       write_eventfd(ctx->fence_eventfd, 1);
+   }
 }
 
 static bool
@@ -30,6 +34,7 @@ render_context_dispatch_submit_fence(struct render_context *ctx,
                                      UNUSED int fd_count)
 {
    const struct render_context_op_submit_fence_request *req = &request->submit_fence;
+   ATRIUM_TRACE_INSTANT_ID("worker.submit_fence_recv", req->seqno);
 
    /* always merge fences */
    assert(!(req->flags & ~VIRGL_RENDERER_FENCE_FLAG_MERGEABLE));
@@ -44,6 +49,7 @@ render_context_dispatch_submit_cmd(struct render_context *ctx,
                                    UNUSED const int *fds,
                                    UNUSED int fd_count)
 {
+   ATRIUM_TRACE_INSTANT("worker.submit_cmd_recv");
    const struct render_context_op_submit_cmd_request *req = &request->submit_cmd;
    void *cmd = (void *)req->cmd;
    if (req->size > sizeof(req->cmd)) {

@@ -43,6 +43,7 @@
 #include "vkr_allocator.h"
 #include "drm_renderer.h"
 #include "proxy/proxy_renderer.h"
+#include "atrium_trace.h"
 #include "vrend/vrend_renderer.h"
 #include "vrend/vrend_winsys.h"
 
@@ -201,6 +202,7 @@ static void per_context_fence_retire(struct virgl_context *ctx,
                                      uint32_t ring_idx,
                                      uint64_t fence_id)
 {
+   ATRIUM_TRACE_INSTANT_ID("venus.fence.retire", fence_id);
    state.cbs->write_context_fence(state.cookie,
                                   ctx->ctx_id,
                                   ring_idx,

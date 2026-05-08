@@ -10,6 +10,7 @@
 #include "vkr_context.h"
 #include "vkr_physical_device.h"
 #include "vkr_queue_gen.h"
+#include "atrium_trace.h"
 
 static struct vkr_queue_sync *
 vkr_device_alloc_queue_sync(struct vkr_device *dev,
@@ -370,6 +371,7 @@ vkr_dispatch_vkQueueSubmit(UNUSED struct vn_dispatch_context *dispatch,
                            struct vn_command_vkQueueSubmit *args)
 {
    TRACE_FUNC();
+   ATRIUM_TRACE_BEGIN("venus.QueueSubmit");
    struct vkr_queue *queue = vkr_queue_from_handle(args->queue);
    struct vn_device_proc_table *vk = &queue->device->proc_table;
 
@@ -379,6 +381,7 @@ vkr_dispatch_vkQueueSubmit(UNUSED struct vn_dispatch_context *dispatch,
    args->ret =
       vk->QueueSubmit(args->queue, args->submitCount, args->pSubmits, args->fence);
    mtx_unlock(&queue->vk_mutex);
+   ATRIUM_TRACE_END("venus.QueueSubmit");
 }
 
 static void
@@ -411,6 +414,7 @@ vkr_dispatch_vkQueueSubmit2(UNUSED struct vn_dispatch_context *dispatch,
                             struct vn_command_vkQueueSubmit2 *args)
 {
    TRACE_FUNC();
+   ATRIUM_TRACE_BEGIN("venus.QueueSubmit2");
    struct vkr_queue *queue = vkr_queue_from_handle(args->queue);
    struct vn_device_proc_table *vk = &queue->device->proc_table;
 
@@ -420,6 +424,7 @@ vkr_dispatch_vkQueueSubmit2(UNUSED struct vn_dispatch_context *dispatch,
    args->ret =
       vk->QueueSubmit2(args->queue, args->submitCount, args->pSubmits, args->fence);
    mtx_unlock(&queue->vk_mutex);
+   ATRIUM_TRACE_END("venus.QueueSubmit2");
 }
 
 static void

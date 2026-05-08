@@ -25,6 +25,7 @@ subdir('mesa')
 subdir('gallium')
 
 virgl_sources = [
+   'atrium_trace.c',
    'virgl_context.c',
    'virgl_fence.c',
    'virgl_resource.c',

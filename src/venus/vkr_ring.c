@@ -12,6 +12,7 @@
 #include "venus-protocol/vn_protocol_renderer_dispatches.h"
 
 #include "vkr_context.h"
+#include "atrium_trace.h"
 
 static inline void *
 get_resource_pointer(const struct vkr_resource *res, size_t offset)
@@ -279,6 +280,7 @@ vkr_ring_thread(void *arg)
 
       if (wait) {
          TRACE_SCOPE("ring idle");
+         ATRIUM_TRACE_BEGIN("venus.ring.idle_wait");
 
          mtx_lock(&ring->mutex);
          while (ring->started && !ring->pending_notify) {
@@ -291,6 +293,7 @@ vkr_ring_thread(void *arg)
          }
          vkr_ring_unset_status_bits(ring, VK_RING_STATUS_IDLE_BIT_MESA);
          mtx_unlock(&ring->mutex);
+         ATRIUM_TRACE_END("venus.ring.idle_wait");
 
          if (!ring->started)
             break;
@@ -311,10 +314,13 @@ vkr_ring_thread(void *arg)
          const uint32_t ring_head = ring->buffer.cur;
          vkr_ring_read_buffer(ring, ring->cmd, cmd_size);
 
+         ATRIUM_TRACE_BEGIN("venus.ring.dispatch");
          if (!vkr_ring_submit_cmd(ring, ring->cmd, cmd_size, ring_head)) {
+            ATRIUM_TRACE_END("venus.ring.dispatch");
             ret = -EINVAL;
             break;
          }
+         ATRIUM_TRACE_END("venus.ring.dispatch");
 
          last_submit = vkr_ring_now();
          relax_iter = 0;
@@ -381,6 +387,7 @@ vkr_ring_stop(struct vkr_ring *ring)
 void
 vkr_ring_notify(struct vkr_ring *ring)
 {
+   ATRIUM_TRACE_INSTANT("venus.ring.notify");
    mtx_lock(&ring->mutex);
    ring->pending_notify = true;
    cnd_signal(&ring->cond);

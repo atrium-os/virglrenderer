@@ -14,6 +14,7 @@
 #include "server/render_protocol.h"
 #include "util/anon_file.h"
 #include "util/bitscan.h"
+#include "atrium_trace.h"
 
 #include "proxy_client.h"
 
@@ -274,6 +275,7 @@ proxy_context_submit_cmd(struct virgl_context *base, const void *buffer, size_t 
    if (!size)
       return 0;
 
+   ATRIUM_TRACE_BEGIN("proxy.submit_cmd_send");
    struct render_context_op_submit_cmd_request req = {
       .header.op = RENDER_CONTEXT_OP_SUBMIT_CMD,
       .size = size,
@@ -284,6 +286,7 @@ proxy_context_submit_cmd(struct virgl_context *base, const void *buffer, size_t 
 
    if (!proxy_socket_send_request(&ctx->socket, &req, sizeof(req))) {
       proxy_log("failed to submit cmd");
+      ATRIUM_TRACE_END("proxy.submit_cmd_send");
       return -1;
    }
 
@@ -291,10 +294,12 @@ proxy_context_submit_cmd(struct virgl_context *base, const void *buffer, size_t 
       if (!proxy_socket_send_request(&ctx->socket, (const char *)buffer + inlined,
                                      size - inlined)) {
          proxy_log("failed to submit large cmd buffer");
+         ATRIUM_TRACE_END("proxy.submit_cmd_send");
          return -1;
       }
    }
 
+   ATRIUM_TRACE_END("proxy.submit_cmd_send");
    return 0;
 }
 
