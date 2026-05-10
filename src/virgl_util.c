@@ -29,9 +29,11 @@
 #include "virgl_util.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #ifdef HAVE_EVENTFD_H
 #include <sys/eventfd.h>
 #endif
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include "util/os_misc.h"
@@ -88,12 +90,30 @@ bool equal_func(const void *key1, const void *key2)
 
 bool has_eventfd(void)
 {
-#ifdef HAVE_EVENTFD_H
+   /* Always available — Linux uses real eventfd; other UNIX hosts
+    * (macOS, FreeBSD) fall back to a socketpair-based emulation
+    * implemented below. The proxy/worker fence-eventfd path requires
+    * this; without it, THREAD_SYNC gets stripped and venus contexts
+    * silently lose their fence-completion signaling. */
    return true;
-#else
-   return false;
-#endif
 }
+
+#ifndef HAVE_EVENTFD_H
+/* Per-process map of "local fd" → "remote peer fd" for socketpair
+ * emulation. The proxy creates a socketpair; one half is returned to
+ * the caller as the "eventfd" (kept locally for poll/drain), and the
+ * peer half is stashed here so the proxy can retrieve it later when
+ * sending the fd to the worker via fd-passing.
+ *
+ * Single-threaded access via the existing proxy ctrl path; if that
+ * ever changes, wrap with a mutex. The map is bounded — one entry
+ * per active proxy_context — so a small fixed array is enough. */
+#define VIRGL_EVENTFD_PEER_MAX 128
+static struct {
+   int local;
+   int peer;
+} virgl_eventfd_peers[VIRGL_EVENTFD_PEER_MAX];
+#endif
 
 int create_eventfd(unsigned int initval)
 {
@@ -101,12 +121,60 @@ int create_eventfd(unsigned int initval)
    return eventfd(initval, EFD_CLOEXEC | EFD_NONBLOCK);
 #else
    (void)initval;
+   /* socketpair-based emulation: bidirectional, one half each side.
+    * Caller gets the LOCAL half (use for poll/drain/self-signal).
+    * Peer half is stashed and retrievable via virgl_eventfd_peer_fd().
+    *
+    * SOCK_STREAM with non-blocking + close-on-exec mirrors eventfd's
+    * EFD_CLOEXEC | EFD_NONBLOCK semantics. */
+   int fds[2];
+   if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0)
+      return -1;
+   for (int i = 0; i < 2; i++) {
+      int fl = fcntl(fds[i], F_GETFL, 0);
+      if (fl >= 0) (void)fcntl(fds[i], F_SETFL, fl | O_NONBLOCK);
+      int fd = fcntl(fds[i], F_GETFD, 0);
+      if (fd >= 0) (void)fcntl(fds[i], F_SETFD, fd | FD_CLOEXEC);
+   }
+   /* Stash peer fds[1] keyed by local fds[0]. */
+   for (int i = 0; i < VIRGL_EVENTFD_PEER_MAX; i++) {
+      if (virgl_eventfd_peers[i].local == 0) {
+         virgl_eventfd_peers[i].local = fds[0];
+         virgl_eventfd_peers[i].peer  = fds[1];
+         return fds[0];
+      }
+   }
+   /* Table full — clean up and fail. */
+   close(fds[0]); close(fds[1]);
+   return -1;
+#endif
+}
+
+int virgl_eventfd_peer_fd(int local_fd)
+{
+#ifdef HAVE_EVENTFD_H
+   /* On Linux, eventfd is bidirectional via the same fd; the kernel
+    * dups it across fd-passing. Caller can use the same fd value. */
+   (void)local_fd;
+   return -1;  /* sentinel: "use local_fd directly" */
+#else
+   if (local_fd < 0)
+      return -1;
+   for (int i = 0; i < VIRGL_EVENTFD_PEER_MAX; i++) {
+      if (virgl_eventfd_peers[i].local == local_fd) {
+         int peer = virgl_eventfd_peers[i].peer;
+         virgl_eventfd_peers[i].local = 0;
+         virgl_eventfd_peers[i].peer  = 0;
+         return peer;
+      }
+   }
    return -1;
 #endif
 }
 
 int write_eventfd(int fd, uint64_t val)
 {
+#ifdef HAVE_EVENTFD_H
    const char *buf = (const char *)&val;
    size_t count = sizeof(val);
    ssize_t ret = 0;
@@ -123,15 +191,37 @@ int write_eventfd(int fd, uint64_t val)
    }
 
    return count ? -1 : 0;
+#else
+   /* socketpair emulation: any write makes the peer's read side
+    * POLLIN-readable. One byte is enough; multiple writes coalesce
+    * naturally on a SOCK_STREAM, drained by flush_eventfd. */
+   (void)val;
+   const char b = 1;
+   ssize_t ret;
+   do { ret = write(fd, &b, 1); }
+   while (ret < 0 && errno == EINTR);
+   /* EAGAIN means the peer's recv buffer is full; that's fine —
+    * peer will still see POLLIN. */
+   return (ret < 0 && errno != EAGAIN) ? -1 : 0;
+#endif
 }
 
 void flush_eventfd(int fd)
 {
+#ifdef HAVE_EVENTFD_H
     ssize_t len;
     uint64_t value;
     do {
        len = read(fd, &value, sizeof(value));
     } while ((len == -1 && errno == EINTR) || len == sizeof(value));
+#else
+    /* Drain the socketpair until EAGAIN. */
+    char buf[64];
+    ssize_t len;
+    do {
+       len = read(fd, buf, sizeof(buf));
+    } while (len > 0 || (len < 0 && errno == EINTR));
+#endif
 }
 
 const struct log_levels_lut {

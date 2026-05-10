@@ -15,6 +15,7 @@
 #include "util/anon_file.h"
 #include "util/bitscan.h"
 #include "atrium_trace.h"
+#include "virgl_util.h"
 
 #include "proxy_client.h"
 
@@ -673,13 +674,30 @@ proxy_context_init(struct proxy_context *ctx, uint32_t ctx_flags)
       .flags = ctx_flags,
       .shmem_size = ctx->shmem.size,
    };
-   const int req_fds[2] = { ctx->shmem.fd, ctx->sync_thread.fence_eventfd };
+   /* On Linux, the eventfd is bidirectional via the same fd value;
+    * we send the same fd we keep. On macOS/FreeBSD (socketpair
+    * emulation), we keep our local half here and send the peer half
+    * to the worker. virgl_eventfd_peer_fd returns -1 on Linux meaning
+    * "use local_fd directly," and the peer fd otherwise. */
+   int worker_eventfd = ctx->sync_thread.fence_eventfd;
+   if (worker_eventfd >= 0) {
+      int peer = virgl_eventfd_peer_fd(worker_eventfd);
+      if (peer >= 0) {
+         worker_eventfd = peer;
+      }
+   }
+   const int req_fds[2] = { ctx->shmem.fd, worker_eventfd };
    const int req_fd_count = req_fds[1] >= 0 ? 2 : 1;
    if (!proxy_socket_send_request_with_fds(&ctx->socket, &req, sizeof(req), req_fds,
                                            req_fd_count)) {
       proxy_log("failed to initialize context");
       return false;
    }
+   /* The peer fd was sent (and dup'd in worker via fd-passing); we
+    * no longer need our copy. On Linux this is a no-op since
+    * worker_eventfd == fence_eventfd. */
+   if (worker_eventfd != ctx->sync_thread.fence_eventfd)
+      close(worker_eventfd);
 
    return true;
 }

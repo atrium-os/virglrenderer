@@ -70,6 +70,14 @@ int create_eventfd(unsigned int initval);
 int write_eventfd(int fd, uint64_t val);
 void flush_eventfd(int fd);
 
+/* On hosts without sys/eventfd.h (macOS/FreeBSD), create_eventfd()
+ * returns one half of a socketpair and stashes the peer half. This
+ * call retrieves the peer for the given local fd, so the proxy can
+ * send the peer to the worker via fd-passing. Returns -1 to indicate
+ * "no peer needed" on Linux (real eventfd is single-fd bidirectional
+ * after fd-passing). */
+int virgl_eventfd_peer_fd(int local_fd);
+
 void virgl_override_log_level(enum virgl_log_level_flags log_level);
 void virgl_log_set_handler(virgl_log_callback_type log_cb,
                            void *user_data,
